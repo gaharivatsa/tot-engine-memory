@@ -371,6 +371,81 @@ def tot_list_runs(limit: int = 10) -> Dict:
     }
 
 @mcp.tool()
+def tot_get_ancestors(run_id: str, node_id: str) -> Dict:
+    """
+    Get full ancestor chain for a node (parent, grandparent, ... up to root).
+    
+    Args:
+        run_id: The run ID
+        node_id: The node to get ancestors for
+    
+    Returns:
+        Dictionary with ancestor chain and sibling nodes
+    """
+    if run_id not in runs:
+        return {"success": False, "error": "Run not found"}
+    
+    run = runs[run_id]
+    
+    if node_id not in run["nodes"]:
+        return {"success": False, "error": "Node not found"}
+    
+    # Build ancestor chain
+    ancestors = []
+    current_id = node_id
+    visited = set()
+    
+    while current_id and current_id not in visited:
+        visited.add(current_id)
+        node = run["nodes"].get(current_id)
+        if not node:
+            break
+        
+        # Get siblings (same parent, excluding self)
+        siblings = []
+        if node.get("parent_id"):
+            for nid, n in run["nodes"].items():
+                if n.get("parent_id") == node["parent_id"] and nid != current_id:
+                    siblings.append({
+                        "node_id": nid,
+                        "thought": n["thought"],
+                        "score": n["score"],
+                        "status": n["status"],
+                    })
+        
+        ancestors.append({
+            "node_id": node["node_id"],
+            "depth": node["depth"],
+            "thought": node["thought"],
+            "score": node["score"],
+            "status": node["status"],
+            "parent_id": node.get("parent_id"),
+            "siblings_at_this_level": siblings,
+        })
+        
+        current_id = node.get("parent_id")
+    
+    # Reverse so root is first
+    ancestors.reverse()
+    
+    # Separate target node from ancestors
+    target_node = ancestors.pop() if ancestors else None
+    
+    return {
+        "success": True,
+        "run_id": run_id,
+        "node_id": node_id,
+        "target_node": target_node,
+        "ancestor_chain": ancestors,  # Root → ... → Parent
+        "depth": target_node["depth"] if target_node else 0,
+        "context_summary": {
+            "root_thought": ancestors[0]["thought"] if ancestors else target_node["thought"],
+            "parent_thought": ancestors[-1]["thought"] if ancestors else None,
+            "sibling_count": len(target_node["siblings_at_this_level"]) if target_node else 0,
+        }
+    }
+
+@mcp.tool()
 def tot_get_exploration_guide(level: str = "moderate") -> Dict:
     """
     Get exploration guide for a level.

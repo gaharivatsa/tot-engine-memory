@@ -1,0 +1,117 @@
+name: Test MCP Server
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install fastmcp pydantic
+    
+    - name: Run MCP tests
+      run: |
+        python3 << 'TESTSCRIPT'
+        from tot_engine_mcp import (
+            tot_start_run, tot_request_samples, tot_submit_samples,
+            tot_get_best_path, tot_get_enforcement_status,
+            tot_get_exploration_guide, tot_list_runs
+        )
+        
+        print("Testing tot-engine-memory MCP server...")
+        
+        # Test 1: Enforced mode
+        result = tot_start_run(
+            task_prompt="Which database?",
+            mode="enforced",
+            exploration_level="shallow"
+        )
+        assert result["success"]
+        run_id = result["run_id"]
+        print(f"✅ Enforced run: {run_id[:8]}...")
+        
+        # Test 2: Request samples
+        frontier = tot_request_samples(run_id)
+        assert frontier["success"]
+        print(f"✅ Frontier: {frontier['frontier_size']} nodes")
+        
+        # Test 3: Submit samples
+        samples = []
+        for req in frontier["sample_requests"]:
+            candidates = [
+                {"thought": "Option A", "progress_estimate": 0.7, "feasibility_estimate": 0.8, "risk_estimate": 0.2},
+                {"thought": "Option B", "progress_estimate": 0.6, "feasibility_estimate": 0.9, "risk_estimate": 0.1}
+            ]
+            samples.append({"parent_node_id": req["node_id"], "candidates": candidates})
+        
+        submit = tot_submit_samples(run_id, samples)
+        assert submit["success"]
+        print(f"✅ Expanded: {submit['nodes_expanded']} nodes")
+        
+        # Test 4: Enforcement status
+        status = tot_get_enforcement_status(run_id)
+        assert status["success"]
+        print(f"✅ Status: {status['nodes_used']} nodes")
+        
+        # Test 5: Best path
+        final = tot_get_best_path(run_id)
+        assert final["success"]
+        print(f"✅ Answer: {final['final_answer'][:40]}...")
+        
+        # Test 6: Regular mode
+        result2 = tot_start_run(task_prompt="Quick test", mode="regular")
+        assert result2["mode"] == "regular"
+        print("✅ Regular mode works")
+        
+        # Test 7: Exploration guide
+        guide = tot_get_exploration_guide(level="deep")
+        assert guide["level"] == "deep"
+        print(f"✅ Deep level: {guide['config']['node_budget']} nodes")
+        
+        # Test 8: List runs
+        runs = tot_list_runs(limit=5)
+        assert len(runs["runs"]) >= 2
+        print(f"✅ Listed {len(runs['runs'])} runs")
+        
+        print("\n🎉 All tests passed!")
+        TESTSCRIPT
+    
+    - name: Test error handling
+      run: |
+        python3 << 'TESTSCRIPT'
+        from tot_engine_mcp import tot_start_run, tot_request_samples
+        
+        # Test error: short prompt
+        err = tot_start_run(task_prompt="Hi", mode="enforced")
+        assert not err["success"]
+        print("✅ Short prompt rejected")
+        
+        # Test error: missing exploration_level
+        err2 = tot_start_run(task_prompt="Valid prompt", mode="enforced")
+        assert not err2["success"]
+        print("✅ Missing level rejected")
+        
+        # Test error: invalid run_id
+        err3 = tot_request_samples("invalid-uuid")
+        assert not err3["success"]
+        print("✅ Invalid run_id rejected")
+        
+        print("\n🎉 Error handling tests passed!")
+        TESTSCRIPT
